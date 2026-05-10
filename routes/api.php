@@ -102,9 +102,17 @@ Route::prefix('v1')->group(function () {
         Route::delete('soal/{soal}',                    [AdminSoalController::class, 'destroy']);
         Route::post('soal/{soal}/publish',              [AdminSoalController::class, 'publish']);
 
+        Route::get('mapel-list',                           [AiUploadController::class, 'mapelList']);
+
         Route::post('ai/upload',                        [AiUploadController::class, 'upload']);
         Route::get('ai/upload/history',                 [AiUploadController::class, 'history']);
+        Route::get('ai/upload/{upload}/status',         [AiUploadController::class, 'status']);
+        Route::post('ai/upload/{upload}/retry',         [AdminAiController::class, 'retryUpload']);
         Route::get('ai/drafts',                         [AdminAiController::class, 'drafts']);
+        Route::post('ai/drafts/test',                   [AdminAiController::class, 'createTestDraft']);
+        Route::post('ai/drafts/bulk-approve',           [AdminAiController::class, 'bulkApproveDrafts']);
+        Route::post('ai/drafts/bulk-reject',            [AdminAiController::class, 'bulkRejectDrafts']);
+        Route::patch('ai/drafts/{draft}',               [AdminAiController::class, 'editDraft']);
         Route::post('ai/drafts/{draft}/approve',        [AdminAiController::class, 'approveDraft']);
         Route::post('ai/drafts/{draft}/reject',         [AdminAiController::class, 'rejectDraft']);
         Route::get('ai/settings',                       [AdminAiController::class, 'settings']);
