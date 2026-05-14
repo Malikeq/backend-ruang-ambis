@@ -43,19 +43,15 @@ class AdminSeeder extends Seeder
                 'onboarding_completed' => true,
                 'diagnostic_completed' => true,
                 'email_verified_at'    => now(),
-                'points'               => 0,
-                'streak_days'          => 0,
+                'points'               => $user->points ?? 0,
+                'streak_days'          => $user->streak_days ?? 0,
+                'password'             => Hash::make($admin['password']),  // always sync
             ]);
-
-            // Only set password if user is new (don't overwrite existing passwords)
-            if (!$user->exists) {
-                $user->password = Hash::make($admin['password']);
-            }
 
             $user->save();
 
-            $action = $user->wasRecentlyCreated ? 'Created' : 'Upgraded to superadmin';
-            $this->command->info("  ✅ [{$action}] {$admin['email']}");
+            $action = $user->wasRecentlyCreated ? 'Created' : 'Password reset & upgraded';
+            $this->command->info("  ✅ [{$action}] {$admin['email']} / {$admin['password']}");
         }
 
         $count = User::where('role', 'superadmin')->count();

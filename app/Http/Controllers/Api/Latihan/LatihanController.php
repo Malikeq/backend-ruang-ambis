@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Latihan;
 
 use App\Http\Controllers\Controller;
 use App\Models\Soal;
+use App\Models\SubMateri;
 use App\Models\SesiLatihan;
 use App\Models\UserAttempt;
 use App\Services\AiExplanationService;
@@ -21,22 +22,59 @@ class LatihanController extends Controller
     public function mulai(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'tipe'      => ['required', 'in:harian,ujian,diagnostic'],
-            'mapel_ids' => ['nullable', 'array'],
+            'tipe'           => ['required', 'in:harian,ujian,diagnostic'],
+            'mode'           => ['nullable', 'in:acak,kelemahan,per_bab,tryout'],
+            'mapel_ids'      => ['nullable', 'array'],
+            'sub_materi_ids' => ['nullable', 'array'],
+            'jumlah_soal'    => ['nullable', 'integer', 'min:5', 'max:50'],
+            'timer_menit'    => ['nullable', 'integer', 'min:5', 'max:180'],
         ]);
 
-        $user     = $request->user();
-        $limit    = $user->isFree() ? 20 : 40;
-        $query    = Soal::where('is_published', true);
+        $user   = $request->user();
+        $mode   = $data['mode'] ?? 'acak';
+        $limit  = $data['jumlah_soal'] ?? ($user->isFree() ? 20 : 40);
+        $query  = Soal::where('is_published', true);
 
+        // Filter by mapel
         if (!empty($data['mapel_ids'])) {
             $query->whereIn('mapel_id', $data['mapel_ids']);
         }
 
-        $soalIds = $query->inRandomOrder()->limit($limit)->pluck('id')->toArray();
+        // Filter by sub-materi (Per Bab mode)
+        if (!empty($data['sub_materi_ids'])) {
+            $query->whereIn('sub_materi_id', $data['sub_materi_ids']);
+        }
+
+        // Fokus Kelemahan: prioritize soal from weak areas
+        if ($mode === 'kelemahan') {
+            $weakMapelIds = DB::table('weakness_reports')
+                ->where('user_id', $user->id)
+                ->where('accuracy_rate', '<', 70)
+                ->orderByRaw('attempt_count - correct_count DESC')
+                ->limit(3)
+                ->pluck('mapel_id')
+                ->toArray();
+
+            if (!empty($weakMapelIds)) {
+                // 70% from weak areas, 30% random
+                $weakLimit  = (int) ceil($limit * 0.7);
+                $randLimit  = $limit - $weakLimit;
+
+                $weakIds = (clone $query)->whereIn('mapel_id', $weakMapelIds)
+                    ->inRandomOrder()->limit($weakLimit)->pluck('id')->toArray();
+                $randIds = (clone $query)->whereNotIn('id', $weakIds)
+                    ->inRandomOrder()->limit($randLimit)->pluck('id')->toArray();
+
+                $soalIds = collect(array_merge($weakIds, $randIds))->shuffle()->toArray();
+            } else {
+                $soalIds = $query->inRandomOrder()->limit($limit)->pluck('id')->toArray();
+            }
+        } else {
+            $soalIds = $query->inRandomOrder()->limit($limit)->pluck('id')->toArray();
+        }
 
         if (empty($soalIds)) {
-            return response()->json(['success' => false, 'message' => 'Bank soal masih kosong.'], 404);
+            return response()->json(['success' => false, 'message' => 'Bank soal masih kosong untuk pilihan ini.'], 404);
         }
 
         $sesi = SesiLatihan::create([
@@ -50,6 +88,24 @@ class LatihanController extends Controller
             'success' => true,
             'data'    => ['id' => $sesi->id, 'total_soal' => count($soalIds), 'soal_ids' => $soalIds],
         ], 201);
+    }
+
+
+    /**
+     * GET /sub-materi — List sub-materi, optionally filtered by mapel_id.
+     */
+    public function subMateri(Request $request): JsonResponse
+    {
+        $query = SubMateri::select('id', 'mapel_id', 'nama')->orderBy('nama');
+
+        if ($request->filled('mapel_id')) {
+            $query->where('mapel_id', (int) $request->mapel_id);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data'    => $query->get(),
+        ]);
     }
 
     /**

@@ -166,13 +166,6 @@ class MaterialUploadService
             $textChunk      = mb_substr($text, 0, 6000);
 
             foreach ($mapels as $mapel) {
-                // Ensure default sub_materi exists for this mapel
-                $subMateri = SubMateri::where('mapel_id', $mapel->id)->first()
-                    ?? SubMateri::firstOrCreate(
-                        ['mapel_id' => $mapel->id, 'nama' => 'Umum'],
-                        ['deskripsi' => 'Sub-materi umum (auto-created)']
-                    );
-
                 $prompt = $this->buildGeneratePrompt($textChunk, $mapel->nama, $soalPerMapel);
 
                 try {
@@ -185,6 +178,14 @@ class MaterialUploadService
                         if (!is_array($draftData) || empty($draftData['pertanyaan'] ?? '')) {
                             continue;
                         }
+
+                        // Resolve sub-materi from AI-generated field — create if new
+                        $subMateriNama = trim($draftData['sub_materi'] ?? '') ?: 'Umum';
+                        $subMateri = SubMateri::firstOrCreate(
+                            ['mapel_id' => $mapel->id, 'nama' => $subMateriNama],
+                            ['deskripsi' => "Auto-generated dari AI — {$mapel->nama}: {$subMateriNama}"]
+                        );
+
                         // Embed resolved IDs so approveDraft can use them directly
                         $draftData['_sub_materi_id'] = $subMateri->id;
                         $draftData['_mapel_id']       = $mapel->id;
@@ -218,6 +219,7 @@ class MaterialUploadService
      * - JSON array or single object
      * - Markdown code fences
      * - Control characters inside JSON strings (AI bug)
+     * - Unescaped newlines/tabs within string values
      */
     public function parseAiSoalResponse(string $text): array
     {
@@ -232,14 +234,12 @@ class MaterialUploadService
             return $this->normaliseAiSoalArray($decoded);
         }
 
-        // Pass 2: strip ASCII control characters (0x00-0x1F except tab/LF/CR)
-        // This fixes "Control character error" — AI embeds raw newlines in strings
-        $sanitized = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $clean);
-        // Also replace literal (unescaped) newlines inside quoted strings
-        $sanitized = preg_replace_callback('/"((?:[^"\\\\]|\\\\.)*)"/s', function ($m) {
-            // Replace actual newlines inside string literals with \n
-            return '"' . str_replace(["\n", "\r"], ['\\n', '\\r'], $m[1]) . '"';
-        }, $sanitized ?? $clean);
+        // Pass 2: aggressive sanitisation
+        // 2a. Strip all ASCII control chars except newline (we handle those next)
+        $sanitized = preg_replace('/[\x00-\x09\x0B\x0C\x0E-\x1F\x7F]/', '', $clean);
+
+        // 2b. State-machine: escape raw newlines/CRs ONLY inside JSON string literals
+        $sanitized = $this->escapeNewlinesInJsonStrings($sanitized ?? $clean);
 
         $decoded = json_decode($sanitized, true);
         if (json_last_error() === JSON_ERROR_NONE) {
@@ -248,10 +248,27 @@ class MaterialUploadService
         }
 
         // Pass 3: extract the outermost [...] array and try again
-        if (preg_match('/\[[\s\S]*\]/m', $sanitized ?? $clean, $m)) {
+        if (preg_match('/\[[\s\S]*\]/m', $sanitized, $m)) {
             $decoded = json_decode($m[0], true);
             if (json_last_error() === JSON_ERROR_NONE) {
                 Log::info('parseAiSoalResponse: extracted JSON via regex');
+                return $this->normaliseAiSoalArray($decoded);
+            }
+        }
+
+        // Pass 4: last resort — remove ALL newlines and try
+        $flat = str_replace(["\r\n", "\r", "\n"], ' ', $sanitized);
+        $decoded = json_decode($flat, true);
+        if (json_last_error() === JSON_ERROR_NONE) {
+            Log::info('parseAiSoalResponse: fixed by flattening all newlines');
+            return $this->normaliseAiSoalArray($decoded);
+        }
+
+        // Pass 4b: extract array from flattened string
+        if (preg_match('/\[.*\]/s', $flat, $m)) {
+            $decoded = json_decode($m[0], true);
+            if (json_last_error() === JSON_ERROR_NONE) {
+                Log::info('parseAiSoalResponse: extracted JSON from flattened string');
                 return $this->normaliseAiSoalArray($decoded);
             }
         }
@@ -261,6 +278,60 @@ class MaterialUploadService
             'preview' => mb_substr($clean, 0, 500),
         ]);
         return [];
+    }
+
+    /**
+     * Walk through JSON text character-by-character, escaping raw newlines
+     * that appear inside quoted string values (a common LLM output bug).
+     */
+    private function escapeNewlinesInJsonStrings(string $json): string
+    {
+        $len      = strlen($json);
+        $result   = '';
+        $inString = false;
+        $escaped  = false;
+
+        for ($i = 0; $i < $len; $i++) {
+            $ch = $json[$i];
+
+            if ($escaped) {
+                // Previous char was backslash — this char is escaped, pass through
+                $result .= $ch;
+                $escaped = false;
+                continue;
+            }
+
+            if ($ch === '\\' && $inString) {
+                $result .= $ch;
+                $escaped = true;
+                continue;
+            }
+
+            if ($ch === '"') {
+                $inString = !$inString;
+                $result .= $ch;
+                continue;
+            }
+
+            // Replace raw newlines inside strings with escaped versions
+            if ($inString && ($ch === "\n" || $ch === "\r")) {
+                if ($ch === "\r" && $i + 1 < $len && $json[$i + 1] === "\n") {
+                    $i++; // skip the \n of \r\n pair
+                }
+                $result .= '\\n';
+                continue;
+            }
+
+            // Replace raw tabs inside strings
+            if ($inString && $ch === "\t") {
+                $result .= '\\t';
+                continue;
+            }
+
+            $result .= $ch;
+        }
+
+        return $result;
     }
 
     private function normaliseAiSoalArray(mixed $decoded): array

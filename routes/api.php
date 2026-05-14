@@ -58,6 +58,9 @@ Route::prefix('v1')->group(function () {
         Route::get('leaderboard',          [LeaderboardController::class, 'index']);
         Route::get('leaderboard/me',       [LeaderboardController::class, 'myRank']);
 
+        // Sub-materi list (for Per Bab mode)
+        Route::get('sub-materi',                         [LatihanController::class, 'subMateri']);
+
         // Latihan
         Route::post('latihan/mulai',                     [LatihanController::class, 'mulai']);
         Route::get('latihan/{sesi}/soal/{index}',        [LatihanController::class, 'getSoal']);
