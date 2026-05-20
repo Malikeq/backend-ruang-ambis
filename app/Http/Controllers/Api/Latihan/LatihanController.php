@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Latihan;
 
 use App\Http\Controllers\Controller;
 use App\Models\Soal;
+use App\Models\Mapel;
 use App\Models\SubMateri;
 use App\Models\SesiLatihan;
 use App\Models\UserAttempt;
@@ -77,6 +78,18 @@ class LatihanController extends Controller
             return response()->json(['success' => false, 'message' => 'Bank soal masih kosong untuk pilihan ini.'], 404);
         }
 
+        // Guard: if we got fewer soal than requested, inform the user instead of silently giving less
+        $got      = count($soalIds);
+        $wanted   = $limit;
+        if ($got < $wanted) {
+            return response()->json([
+                'success' => false,
+                'message' => "Bank soal hanya memiliki {$got} soal untuk pilihan ini, sedangkan kamu memilih {$wanted}. Mohon kurangi jumlah soal atau tambah soal melalui upload materi.",
+                'available' => $got,
+                'requested' => $wanted,
+            ], 422);
+        }
+
         $sesi = SesiLatihan::create([
             'user_id'  => $user->id,
             'tipe'     => $data['tipe'],
@@ -92,19 +105,120 @@ class LatihanController extends Controller
 
 
     /**
-     * GET /sub-materi — List sub-materi, optionally filtered by mapel_id.
+     * GET /sub-materi — List sub-materi with soal counts.
+     * Only returns sub-materi that have at least 1 published soal.
      */
     public function subMateri(Request $request): JsonResponse
     {
-        $query = SubMateri::select('id', 'mapel_id', 'nama')->orderBy('nama');
+        $query = SubMateri::select('sub_materi.id', 'sub_materi.mapel_id', 'sub_materi.nama')
+            ->selectRaw('COUNT(soal.id) as soal_count')
+            ->join('soal', function ($join) {
+                $join->on('soal.sub_materi_id', '=', 'sub_materi.id')
+                     ->where('soal.is_published', true);
+            })
+            ->groupBy('sub_materi.id', 'sub_materi.mapel_id', 'sub_materi.nama')
+            ->having('soal_count', '>=', 1)
+            ->orderBy('sub_materi.nama');
 
         if ($request->filled('mapel_id')) {
-            $query->where('mapel_id', (int) $request->mapel_id);
+            $query->where('sub_materi.mapel_id', (int) $request->mapel_id);
         }
 
         return response()->json([
             'success' => true,
             'data'    => $query->get(),
+        ]);
+    }
+
+
+    /**
+     * GET /mapel — List all mapel with real IDs (for latihan setup).
+     */
+    public function mapelList(): JsonResponse
+    {
+        $mapels = Mapel::select('id', 'kode', 'nama')->orderBy('id')->get();
+        return response()->json(['success' => true, 'data' => $mapels]);
+    }
+
+    /**
+     * GET /latihan/riwayat — Paginated session history for the current user.
+     */
+    public function riwayat(Request $request): JsonResponse
+    {
+        $userId  = $request->user()->id;
+        $perPage = min((int) ($request->per_page ?? 20), 50);
+
+        // Load completed sessions (selesai IS a timestamp, null = in-progress)
+        $paginator = SesiLatihan::where('user_id', $userId)
+            ->whereNotNull('selesai')
+            ->select(['id', 'tipe', 'soal_ids', 'mulai', 'selesai', 'skor_raw', 'skor_akhir', 'created_at'])
+            ->orderBy('created_at', 'desc')
+            ->paginate($perPage);
+
+        // Collect all soal IDs needed to resolve mapel names in one query
+        $allFirstSoalIds = $paginator->getCollection()
+            ->map(fn($s) => is_array($s->soal_ids) ? $s->soal_ids[0] ?? null : null)
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        $mapelBySoalId = [];
+        if (count($allFirstSoalIds)) {
+            $rows = DB::table('soal')
+                ->join('mapel', 'mapel.id', '=', 'soal.mapel_id')
+                ->whereIn('soal.id', $allFirstSoalIds)
+                ->select('soal.id as soal_id', 'mapel.kode', 'mapel.nama')
+                ->get();
+            foreach ($rows as $r) {
+                $mapelBySoalId[$r->soal_id] = ['kode' => $r->kode, 'nama' => $r->nama];
+            }
+        }
+
+        // Count total_benar per session in a single query
+        $sesiIds = $paginator->getCollection()->pluck('id')->all();
+        $benarMap = [];
+        if (count($sesiIds)) {
+            $rows = DB::table('user_attempts')
+                ->whereIn('sesi_latihan_id', $sesiIds)
+                ->where('is_correct', true)
+                ->selectRaw('sesi_latihan_id, COUNT(*) as cnt')
+                ->groupBy('sesi_latihan_id')
+                ->pluck('cnt', 'sesi_latihan_id');
+            $benarMap = $rows->all();
+        }
+
+        $items = $paginator->getCollection()->map(function ($s) use ($mapelBySoalId, $benarMap) {
+            $firstSoalId = is_array($s->soal_ids) ? ($s->soal_ids[0] ?? null) : null;
+            $mapel       = $firstSoalId ? ($mapelBySoalId[$firstSoalId] ?? null) : null;
+            $totalSoal   = is_array($s->soal_ids) ? count($s->soal_ids) : 0;
+            $totalBenar  = (int) ($benarMap[$s->id] ?? 0);
+            $skor        = (int) round($s->skor_raw ?? 0);
+            $snbt        = (int) round($s->skor_akhir ?? (400 + ($skor / 100) * 400));
+            $durasi      = $s->mulai && $s->selesai
+                           ? (int) $s->selesai->diffInSeconds($s->mulai)
+                           : null;
+
+            return [
+                'id'           => $s->id,
+                'mapel_kode'   => $mapel['kode']  ?? '—',
+                'mapel_nama'   => $mapel['nama']  ?? 'Campuran',
+                'tipe'         => $s->tipe ?? 'harian',
+                'skor_raw'     => $skor,
+                'skor_akhir'   => $snbt,
+                'total_soal'   => $totalSoal,
+                'total_benar'  => $totalBenar,
+                'durasi_detik' => $durasi,
+                'tanggal'      => $s->created_at->toISOString(),
+            ];
+        });
+
+        return response()->json([
+            'success'      => true,
+            'data'         => $items,
+            'current_page' => $paginator->currentPage(),
+            'last_page'    => $paginator->lastPage(),
+            'total'        => $paginator->total(),
         ]);
     }
 
@@ -120,7 +234,9 @@ class LatihanController extends Controller
             return response()->json(['success' => false, 'message' => 'Index soal tidak valid.'], 404);
         }
 
-        $soal = Soal::with(['mapel', 'sub_materi', 'pilihan_jawaban', 'pembahasan'])->findOrFail($soalIds[$index]);
+        $soal = Soal::with(['mapel', 'sub_materi', 'pilihan_jawaban', 'pembahasan'])
+            ->withCount('aiExplanation')
+            ->findOrFail($soalIds[$index]);
 
         // Shuffle options, hide is_correct
         $options = $soal->pilihan_jawaban->map(fn($p) => [
@@ -144,7 +260,8 @@ class LatihanController extends Controller
                 'sub_materi'        => $soal->sub_materi,
                 'pilihan_jawaban'   => $options,
                 'pembahasan'        => $pembahasanTeks,
-                'has_ai_explanation'=> $soal->aiExplanation()->exists(),
+                // Uses withCount eager load — no extra query
+                'has_ai_explanation'=> $soal->ai_explanation_count > 0,
             ],
         ]);
     }
@@ -215,12 +332,27 @@ class LatihanController extends Controller
         $benar     = $attempts->where('is_correct', true)->count();
         $skorRaw   = $total > 0 ? ($benar / $total) * 100 : 0;
 
-        $sesi->update(['selesai' => now(), 'skor_raw' => $skorRaw]);
+        // SNBT-scale score: 400 base + up to 400 points from accuracy
+        $skorAkhir = round(400 + ($skorRaw / 100) * 400, 2);
+
+        $sesi->update([
+            'selesai'    => now(),
+            'skor_raw'   => $skorRaw,
+            'skor_akhir' => $skorAkhir,
+        ]);
 
         // Reward for completing session
         $request->user()->addPoints(15, 'Menyelesaikan sesi latihan');
 
-        return response()->json(['success' => true, 'data' => ['skor_raw' => $skorRaw]]);
+        return response()->json([
+            'success' => true,
+            'data'    => [
+                'skor_raw'    => $skorRaw,
+                'skor_akhir'  => $skorAkhir,
+                'total_benar' => $benar,
+                'total_soal'  => $total,
+            ],
+        ]);
     }
 
     /**

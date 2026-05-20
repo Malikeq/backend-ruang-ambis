@@ -3,13 +3,13 @@
 namespace App\Http\Controllers\Api\AI;
 
 use App\Http\Controllers\Controller;
-use App\Services\GeminiService;
+use App\Services\AiService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 class AiPhotoController extends Controller
 {
-    public function __construct(private GeminiService $gemini) {}
+    public function __construct(private AiService $gemini) {}
 
     public function solve(Request $request): JsonResponse
     {

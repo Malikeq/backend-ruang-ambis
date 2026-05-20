@@ -70,17 +70,22 @@ class OnboardingController extends Controller
         $data = $request->validate([
             'targets'               => ['required', 'array', 'min:1', 'max:4'],
             'targets.*.kampus_id'   => ['required', 'integer', 'exists:kampus,id'],
-            'targets.*.jurusan_id'  => ['required', 'integer', 'exists:jurusan,id'],
+            'targets.*.jurusan_id'  => ['nullable', 'integer'],
         ]);
 
         $user = $request->user();
         UserKampusTarget::where('user_id', $user->id)->delete();
 
         foreach ($data['targets'] as $i => $t) {
+            // Validate jurusan_id: must exist in DB (positive) or be null
+            $jurusanId = isset($t['jurusan_id']) && $t['jurusan_id'] > 0
+                ? (Jurusan::where('id', $t['jurusan_id'])->exists() ? $t['jurusan_id'] : null)
+                : null;
+
             UserKampusTarget::create([
                 'user_id'    => $user->id,
                 'kampus_id'  => $t['kampus_id'],
-                'jurusan_id' => $t['jurusan_id'],
+                'jurusan_id' => $jurusanId,
                 'priority'   => $i + 1,
             ]);
         }
@@ -99,14 +104,30 @@ class OnboardingController extends Controller
             'referral_source' => ['required', 'string', 'max:100'],
         ]);
 
-        // Store if the column exists on users table; otherwise ignore gracefully
         try {
             $request->user()->update(['referral_source' => $data['referral_source']]);
-        } catch (\Exception) {
-            // Column may not exist yet — non-blocking
-        }
+        } catch (\Exception) {}
 
         return response()->json(['success' => true]);
+    }
+
+    /** POST /user/profile — update name, asal_sekolah, referral_source */
+    public function updateProfile(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'name'            => ['nullable', 'string', 'max:100'],
+            'asal_sekolah'    => ['nullable', 'string', 'max:200'],
+            'referral_source' => ['nullable', 'string', 'max:100'],
+        ]);
+
+        $user = $request->user();
+        $user->update(array_filter($data, fn($v) => $v !== null));
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Profil berhasil diperbarui.',
+            'data'    => $user->fresh(['kampusTargets']),
+        ]);
     }
 
     /** POST /onboarding/complete */

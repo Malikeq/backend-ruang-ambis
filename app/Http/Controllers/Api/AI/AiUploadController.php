@@ -16,28 +16,38 @@ class AiUploadController extends Controller
     public function upload(Request $request): JsonResponse
     {
         $request->validate([
-            'file'               => ['required', 'file', 'max:20480', 'mimes:pdf,docx,pptx,txt,md,xlsx,csv,jpg,jpeg,png'],
-            'target_mapel_ids'   => ['required', 'json'],
-            'jumlah_soal_target' => ['required', 'integer', 'min:5', 'max:50'],
+            'file'                => ['required', 'file', 'max:20480', 'mimes:pdf,docx,pptx,txt,md,xlsx,csv,jpg,jpeg,png'],
+            'target_mapel_ids'    => ['required', 'json'],
+            'jumlah_soal_target'  => ['required', 'integer', 'min:5', 'max:50'],
+            'target_sub_materi'   => ['nullable', 'json'],   // {"mapel_id": ["Sub A","Sub B"], ...}
+            'tingkat_kesulitan'   => ['nullable', 'in:mudah,sedang,sulit'],
         ]);
 
         $mapelIds = json_decode($request->target_mapel_ids, true);
-
         if (empty($mapelIds)) {
             return response()->json(['success' => false, 'message' => 'Pilih minimal 1 mapel target.'], 422);
         }
 
-        // Validate mapel IDs exist
         $validMapelIds = Mapel::whereIn('id', $mapelIds)->pluck('id')->toArray();
         if (empty($validMapelIds)) {
             return response()->json(['success' => false, 'message' => 'Mapel yang dipilih tidak valid.'], 422);
+        }
+
+        // target_sub_materi: {"1": ["Peluang","Statistika"], "2": ["Paragraf Utama"]}
+        $targetSubMateri = [];
+        if ($request->filled('target_sub_materi')) {
+            $decoded = json_decode($request->target_sub_materi, true);
+            if (is_array($decoded)) {
+                $targetSubMateri = $decoded;
+            }
         }
 
         $upload = $this->service->process(
             $request->file('file'),
             $validMapelIds,
             (int) $request->jumlah_soal_target,
-            $request->user()->id
+            $request->user()->id,
+            $targetSubMateri
         );
 
         return response()->json([
@@ -46,6 +56,7 @@ class AiUploadController extends Controller
             'message' => 'File berhasil diupload. AI sedang memproses dan membuat soal...',
         ], 201);
     }
+
 
     public function history(Request $request): JsonResponse
     {

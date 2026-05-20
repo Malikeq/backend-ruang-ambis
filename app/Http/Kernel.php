@@ -47,5 +47,6 @@ class Kernel extends HttpKernel
         'check.tier'       => \App\Http\Middleware\CheckTier::class,
         'rate.limit.ai'    => \App\Http\Middleware\RateLimitAI::class,
         'admin'            => \App\Http\Middleware\AdminMiddleware::class,
+        'pengamat'         => \App\Http\Middleware\PengamatMiddleware::class,
     ];
 }

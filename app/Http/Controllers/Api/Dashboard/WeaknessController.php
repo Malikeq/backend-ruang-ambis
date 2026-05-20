@@ -29,7 +29,10 @@ class WeaknessController extends Controller
                 'mapel'          => $r->mapel,
                 'attempt_count'  => $r->attempt_count,
                 'correct_count'  => $r->correct_count,
-                'accuracy_rate'  => round($r->accuracy_rate, 1),
+                'accuracy_rate'  => round((float) $r->accuracy_rate, 1),
+                // Aliases used by the mobile app
+                'rata_rata_skor' => round((float) $r->accuracy_rate, 1),
+                'total_sesi'     => (int) $r->attempt_count,
                 'is_flagged'     => $r->is_flagged,
                 'last_seen'      => $r->last_seen,
             ]);

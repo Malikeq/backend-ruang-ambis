@@ -45,6 +45,26 @@ class DashboardController extends Controller
                 'attempt_count' => $r->attempt_count,
             ]);
 
+        // ── Skor SNBT Estimasi ─────────────────────────────────────────────
+        // Method 1: from recent sesi latihan skor_akhir
+        $avgSkorLatihan = $user->sesiLatihan()
+            ->whereNotNull('skor_akhir')
+            ->where('created_at', '>=', now()->subDays(30))
+            ->avg('skor_akhir');
+
+        // Method 2: from akurasi overall (akurasi% → SNBT scale 400-1000)
+        // SNBT baseline 400, max achievable ~1000; linear: 400 + (akurasi/100) * 600
+        $skorDariAkurasi = $akurasiAll > 0
+            ? round(400 + ($akurasiAll / 100) * 600)
+            : 0;
+
+        // Prefer real latihan score, fallback to akurasi-derived
+        $skorSnbtEstimasi = $avgSkorLatihan
+            ? round((float) $avgSkorLatihan)
+            : $skorDariAkurasi;
+
+        $hasSkorData = $totalSoal > 0;
+
         return response()->json([
             'success' => true,
             'data'    => [
@@ -52,11 +72,21 @@ class DashboardController extends Controller
                 'streak'                  => $streak,
                 'points'                  => $user->points,
                 'total_soal_dikerjakan'   => $totalSoal,
+                // Primary field names
                 'akurasi_overall'         => $akurasiAll,
+                'skor_snbt_estimasi'      => $skorSnbtEstimasi,
+                'has_skor_data'           => $hasSkorData,
+                // Aliases for mobile compat
+                'rata_rata_skor'          => $akurasiAll,
+                'progres_per_mapel'       => $progressPerMapel,
+                'mapel_progress'          => $progressPerMapel->map(fn($r) => [
+                    'mapel'      => $r['mapel']?->nama ?? '—',
+                    'skor'       => $r['akurasi'],
+                    'soal_count' => $r['attempt_count'],
+                ]),
                 'sesi_hari_ini'           => $sesiHariIni,
                 'target_harian_tercapai'  => $sesiHariIni >= 1,
                 'kelemahan_kritis'        => $kelemahan,
-                'progres_per_mapel'       => $progressPerMapel,
             ],
         ]);
     }

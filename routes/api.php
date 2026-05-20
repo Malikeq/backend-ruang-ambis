@@ -17,6 +17,11 @@ use App\Http\Controllers\Api\Admin\AdminUserController;
 use App\Http\Controllers\Api\Admin\AdminSoalController;
 use App\Http\Controllers\Api\Admin\AdminAiController;
 use App\Http\Controllers\Api\Admin\AdminPackageController;
+use App\Http\Controllers\Api\Admin\AdminPengamatController;
+use App\Http\Controllers\Api\Pengamat\PengamatController;
+use App\Http\Controllers\Api\Pengamat\PengamatAuthController;
+use App\Http\Controllers\Api\KeketatanController;
+
 
 Route::prefix('v1')->group(function () {
 
@@ -37,6 +42,7 @@ Route::prefix('v1')->group(function () {
 
         // User profile & targets
         Route::get('user/targets',         [OnboardingController::class, 'getTargets']);
+        Route::post('user/profile',        [OnboardingController::class, 'updateProfile']);
 
         // Onboarding
         Route::post('onboarding/target',            [OnboardingController::class, 'setTarget']);
@@ -54,15 +60,25 @@ Route::prefix('v1')->group(function () {
         Route::get('weakness',             [WeaknessController::class, 'index']);
         Route::get('weakness/{id}',        [WeaknessController::class, 'detail']);
 
+        // Keketatan & Peluang Lolos
+        Route::get('user/peluang-lolos',        [KeketatanController::class, 'indexUserPeluang']);
+        Route::post('user/estimasi-skor',       [KeketatanController::class, 'estimasiSkor']);
+        Route::get('prodi/cari',                [KeketatanController::class, 'cariProdi']);
+        Route::get('prodi/{kode}/statistik',    [KeketatanController::class, 'prodiDetail']);
+
+
         // Leaderboard
         Route::get('leaderboard',          [LeaderboardController::class, 'index']);
         Route::get('leaderboard/me',       [LeaderboardController::class, 'myRank']);
 
         // Sub-materi list (for Per Bab mode)
         Route::get('sub-materi',                         [LatihanController::class, 'subMateri']);
+        // Mapel list with real IDs (for latihan page)
+        Route::get('mapel',                              [LatihanController::class, 'mapelList']);
 
         // Latihan
         Route::post('latihan/mulai',                     [LatihanController::class, 'mulai']);
+        Route::get('latihan/riwayat',                    [LatihanController::class, 'riwayat']);
         Route::get('latihan/{sesi}/soal/{index}',        [LatihanController::class, 'getSoal']);
         Route::post('latihan/{sesi}/jawab',              [LatihanController::class, 'jawab']);
         Route::post('latihan/{sesi}/selesai',            [LatihanController::class, 'selesai']);
@@ -107,6 +123,7 @@ Route::prefix('v1')->group(function () {
 
         Route::get('mapel-list',                           [AiUploadController::class, 'mapelList']);
 
+        Route::post('ai/generate',                      [AdminAiController::class, 'generateDirect']);
         Route::post('ai/upload',                        [AiUploadController::class, 'upload']);
         Route::get('ai/upload/history',                 [AiUploadController::class, 'history']);
         Route::get('ai/upload/{upload}/status',         [AiUploadController::class, 'status']);
@@ -130,6 +147,34 @@ Route::prefix('v1')->group(function () {
         Route::get('kampus',                            [\App\Http\Controllers\Api\Admin\AdminKampusController::class, 'index']);
         Route::post('kampus/{kampus}/fetch-logo',       [\App\Http\Controllers\Api\Admin\AdminKampusController::class, 'fetchLogo']);
         Route::post('kampus/fetch-all-logos',           [\App\Http\Controllers\Api\Admin\AdminKampusController::class, 'fetchAllLogos']);
+
+        // ── Pengamat management ───────────────────────────────
+        Route::get('pengamat',                          [AdminPengamatController::class, 'index']);
+        Route::post('pengamat/{pengamat}/approve',      [AdminPengamatController::class, 'approve']);
+        Route::post('pengamat/{pengamat}/reject',       [AdminPengamatController::class, 'reject']);
+        Route::get('sekolah',                           [AdminPengamatController::class, 'sekolahIndex']);
+        Route::post('sekolah',                          [AdminPengamatController::class, 'sekolahStore']);
+    });
+
+    // ── Pengamat (public — register & sekolah search) ──────
+    Route::post('pengamat/register',                    [PengamatAuthController::class, 'register']);
+    Route::get('pengamat/sekolah',                      [PengamatController::class, 'sekolahList']);
+
+    // ── Pengamat (auth required — any role, for status check) ─
+    Route::middleware('auth:sanctum')->group(function () {
+        Route::get('pengamat/auth/status',              [PengamatAuthController::class, 'status']);
+    });
+
+    // ── Pengamat (auth + approved) ─────────────────────────
+    Route::middleware(['auth:sanctum', 'pengamat'])->prefix('pengamat')->group(function () {
+        Route::get('me',                                [PengamatController::class, 'me']);
+        Route::get('overview',                          [PengamatController::class, 'overview']);
+        Route::get('siswa',                             [PengamatController::class, 'siswa']);
+        Route::get('siswa/{id}',                        [PengamatController::class, 'siswaDetail']);
+        Route::get('ranking',                           [PengamatController::class, 'ranking']);
+        Route::get('aktivitas-harian',                  [PengamatController::class, 'aktivitasHarian']);
+        Route::get('kelemahan-kelas',                   [PengamatController::class, 'kelemahanKelas']);
+        Route::get('at-risk',                           [PengamatController::class, 'atRisk']);
     });
 
 });

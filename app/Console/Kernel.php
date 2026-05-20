@@ -9,13 +9,17 @@ class Kernel extends ConsoleKernel
 {
     protected function schedule(Schedule $schedule): void
     {
-        // Re-fetch any missing campus logos every Sunday at midnight
+        // Re-fetch campus logos every Sunday at midnight
         $schedule->command('kampus:fetch-logos --limit=50')
-                 ->weekly()
-                 ->sundays()
-                 ->at('00:00')
+                 ->weekly()->sundays()->at('00:00')
+                 ->withoutOverlapping()->runInBackground();
+
+        // Auto-scrape keketatan SNBT — 1st of each month at 02:00
+        $schedule->command('snbt:scrape-sidata ' . (date('Y') - 1))
+                 ->monthlyOn(1, '02:00')
                  ->withoutOverlapping()
-                 ->runInBackground();
+                 ->runInBackground()
+                 ->appendOutputTo(storage_path('logs/snbt-scrape.log'));
     }
 
     protected function commands(): void

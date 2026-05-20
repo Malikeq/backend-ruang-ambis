@@ -16,7 +16,7 @@ class User extends Authenticatable
         'name', 'email', 'password', 'role', 'tier', 'points',
         'streak_days', 'last_active', 'is_banned',
         'onboarding_completed', 'diagnostic_completed', 'avatar_url',
-        'referral_source',
+        'referral_source', 'asal_sekolah', 'sekolah_id',
     ];
 
     protected $hidden = ['password', 'remember_token'];
@@ -27,15 +27,15 @@ class User extends Authenticatable
         'is_banned'            => 'boolean',
         'onboarding_completed' => 'boolean',
         'diagnostic_completed' => 'boolean',
-        // 'hashed' is Laravel 11+ only — password hashing handled in controllers/seeders
     ];
 
-    // ── Simple role helpers ────────────────────────────────
-    public function isAdmin(): bool    { return $this->role === 'superadmin'; }
-    public function isFree(): bool     { return $this->tier === 'free'; }
-    public function isPremium(): bool  { return $this->tier === 'premium'; }
-    public function isDailyPass(): bool{ return $this->tier === 'daily_pass'; }
-    public function hasAIAccess(): bool{ return !$this->isFree(); }
+    // ── Role helpers ───────────────────────────────────────
+    public function isAdmin(): bool     { return $this->role === 'superadmin'; }
+    public function isPengamat(): bool  { return $this->role === 'pengamat'; }
+    public function isFree(): bool      { return $this->tier === 'free'; }
+    public function isPremium(): bool   { return $this->tier === 'premium'; }
+    public function isDailyPass(): bool { return $this->tier === 'daily_pass'; }
+    public function hasAIAccess(): bool { return !$this->isFree(); }
 
     // ── Relationships ──────────────────────────────────────
     public function kampusTargets()      { return $this->hasMany(UserKampusTarget::class); }
@@ -45,6 +45,9 @@ class User extends Authenticatable
     public function subscriptions()      { return $this->hasMany(Subscription::class); }
     public function pointsTransactions() { return $this->hasMany(PointsTransaction::class); }
     public function transactions()       { return $this->hasMany(Transaction::class); }
+    // Pengamat relationships
+    public function sekolah()            { return $this->belongsTo(Sekolah::class); }
+    public function pengamatSekolah()    { return $this->hasOne(PengamatSekolah::class, 'pengamat_id'); }
     public function activeSubscription() {
         return $this->hasOne(Subscription::class)
             ->where('status', 'active')
