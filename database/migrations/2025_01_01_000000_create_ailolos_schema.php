@@ -159,7 +159,7 @@ return new class extends Migration {
             $table->foreignId('user_id')->constrained()->cascadeOnDelete();
             $table->enum('tipe', ['harian', 'ujian', 'diagnostic'])->default('harian');
             $table->json('soal_ids');
-            $table->timestamp('mulai');
+            $table->timestamp('mulai')->useCurrent();
             $table->timestamp('selesai')->nullable();
             $table->decimal('skor_raw', 5, 2)->nullable();
             $table->decimal('skor_irt', 5, 3)->nullable();
@@ -241,8 +241,8 @@ return new class extends Migration {
             $table->id();
             $table->foreignId('user_id')->constrained()->cascadeOnDelete();
             $table->foreignId('package_id')->constrained('packages');
-            $table->timestamp('mulai');
-            $table->timestamp('selesai');
+            $table->timestamp('mulai')->useCurrent();
+            $table->timestamp('selesai')->nullable();
             $table->string('payment_id')->nullable();
             $table->enum('status', ['active', 'expired', 'cancelled'])->default('active');
             $table->timestamps();
