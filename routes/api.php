@@ -83,6 +83,8 @@ Route::prefix('v1')->group(function () {
         Route::post('latihan/{sesi}/jawab',              [LatihanController::class, 'jawab']);
         Route::post('latihan/{sesi}/selesai',            [LatihanController::class, 'selesai']);
         Route::get('latihan/{sesi}/hasil',               [LatihanController::class, 'hasil']);
+        Route::get('latihan/{sesi}/review',              [LatihanController::class, 'review']);
+
 
         // AI Explanation (free — cached)
         Route::get('ai/explanation/{soalId}',            [AiExplanationController::class, 'getExplanation']);
@@ -114,9 +116,19 @@ Route::prefix('v1')->group(function () {
         Route::patch('users/{user}/tier',               [AdminUserController::class, 'updateTier']);
         Route::post('users/{user}/ban',                 [AdminUserController::class, 'ban']);
         Route::post('users/{user}/unban',               [AdminUserController::class, 'unban']);
+        Route::post('users/{user}/reset-points',        [AdminUserController::class, 'resetPoints']);
+        // ── Streak Testing Tools ──────────────────────────
+        Route::post('users/{user}/simulate-day',        [AdminUserController::class, 'simulateDay']);
+        Route::post('users/{user}/reset-streak',        [AdminUserController::class, 'resetStreak']);
+        Route::post('users/{user}/set-streak',          [AdminUserController::class, 'setStreak']);
+
 
         Route::get('soal',                              [AdminSoalController::class, 'index']);
         Route::post('soal',                             [AdminSoalController::class, 'store']);
+        Route::get('soal/template',                     [AdminSoalController::class, 'downloadTemplate']);
+        Route::post('soal/bulk-import',                 [AdminSoalController::class, 'bulkImport']);
+        Route::get('soal/{soal}',                       [AdminSoalController::class, 'show']);
+        Route::put('soal/{soal}',                       [AdminSoalController::class, 'updateFull']);
         Route::patch('soal/{soal}',                     [AdminSoalController::class, 'update']);
         Route::delete('soal/{soal}',                    [AdminSoalController::class, 'destroy']);
         Route::post('soal/{soal}/publish',              [AdminSoalController::class, 'publish']);
@@ -150,8 +162,10 @@ Route::prefix('v1')->group(function () {
 
         // ── Pengamat management ───────────────────────────────
         Route::get('pengamat',                          [AdminPengamatController::class, 'index']);
+        Route::post('pengamat',                         [AdminPengamatController::class, 'store']);
         Route::post('pengamat/{pengamat}/approve',      [AdminPengamatController::class, 'approve']);
         Route::post('pengamat/{pengamat}/reject',       [AdminPengamatController::class, 'reject']);
+        Route::delete('pengamat/{pengamat}',            [AdminPengamatController::class, 'destroy']);
         Route::get('sekolah',                           [AdminPengamatController::class, 'sekolahIndex']);
         Route::post('sekolah',                          [AdminPengamatController::class, 'sekolahStore']);
     });

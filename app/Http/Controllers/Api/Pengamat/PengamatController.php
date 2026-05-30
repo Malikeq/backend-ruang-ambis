@@ -197,6 +197,23 @@ class PengamatController extends Controller
             ->limit(5)
             ->get();
 
+        // ── Stats agregat siswa ini ──────────────────────────────────────────
+        $stats = DB::table('sesi_latihan')
+            ->where('user_id', $siswaId)
+            ->whereNotNull('selesai')
+            ->selectRaw('
+                COUNT(*) as total_sesi,
+                AVG(skor_akhir) as avg_snbt,
+                SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY) THEN 1 ELSE 0 END) as sesi_7d
+            ')
+            ->first();
+
+        $siswa->total_sesi = (int)   ($stats->total_sesi ?? 0);
+        $siswa->avg_snbt   = round(   $stats->avg_snbt   ?? 0, 1);
+        $siswa->sesi_7d    = (int)   ($stats->sesi_7d    ?? 0);
+        // streak_days sudah ada di model, pastikan ter-expose
+        $siswa->streak_days = (int) $siswa->streak_days;
+
         return response()->json([
             'success' => true,
             'data'    => [

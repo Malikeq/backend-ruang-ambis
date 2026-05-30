@@ -246,7 +246,11 @@ class LatihanController extends Controller
         ]);
 
         // Include pembahasan text if exists (don't reveal correct answer through it pre-answer)
-        $pembahasanTeks = $soal->pembahasan?->konten ?? null;
+        $pembahasanTeks = null;
+        if ($soal->pembahasan) {
+            $steps = $soal->pembahasan->langkah_langkah ?? [];
+            $pembahasanTeks = collect($steps)->pluck('teks')->filter()->join(' ');
+        }
 
         return response()->json([
             'success' => true,
@@ -387,6 +391,70 @@ class LatihanController extends Controller
                 'total_benar' => $benar,
                 'total_soal'  => $total,
                 'per_mapel'   => $perMapel,
+            ],
+        ]);
+    }
+
+    /**
+     * GET /latihan/{sesi}/review — Per-question review after session ends.
+     */
+    public function review(Request $request, int $sesiId): JsonResponse
+    {
+        $sesi     = SesiLatihan::where('id', $sesiId)
+                               ->where('user_id', $request->user()->id)
+                               ->firstOrFail();
+
+        $attempts = UserAttempt::with(['soal.pilihan_jawaban', 'soal.mapel', 'soal.pembahasan'])
+                               ->where('sesi_latihan_id', $sesiId)
+                               ->get()
+                               ->keyBy('soal_id');
+
+        // Build ordered review by soal_ids in session
+        $soalIds = $sesi->soal_ids;
+        $soals   = Soal::with(['pilihan_jawaban', 'mapel', 'pembahasan'])
+                       ->whereIn('id', $soalIds)
+                       ->get()
+                       ->keyBy('id');
+
+        $items = collect($soalIds)->values()->map(function ($soalId, $index) use ($soals, $attempts) {
+            $soal    = $soals[$soalId] ?? null;
+            $attempt = $attempts[$soalId] ?? null;
+
+            if (!$soal) return null;
+
+            $correctPilihan = $soal->pilihan_jawaban->firstWhere('is_correct', true);
+
+            return [
+                'index'       => $index,
+                'soal_id'     => $soalId,
+                'konten'      => $soal->konten,
+                'mapel'       => $soal->mapel ? ['id' => $soal->mapel->id, 'nama' => $soal->mapel->nama, 'kode' => $soal->mapel->kode] : null,
+                'pembahasan'  => (function ($p) {
+                    if (!$p) return null;
+                    $steps = $p->langkah_langkah ?? [];
+                    return collect($steps)->pluck('teks')->filter()->join(' ');
+                })($soal->pembahasan),
+                'pilihan'     => $soal->pilihan_jawaban->map(fn($p) => [
+                    'id'         => $p->id,
+                    'label'      => $p->label,
+                    'konten'     => $p->konten,
+                    'is_correct' => (bool) $p->is_correct,
+                ])->values(),
+                'jawaban_id'  => $attempt?->jawaban_id,
+                'correct_id'  => $correctPilihan?->id,
+                'is_correct'  => (bool) ($attempt?->is_correct ?? false),
+                'skipped'     => $attempt === null,
+            ];
+        })->filter()->values();
+
+        return response()->json([
+            'success' => true,
+            'data'    => $items,
+            'summary' => [
+                'total'       => count($soalIds),
+                'benar'       => $items->where('is_correct', true)->count(),
+                'salah'       => $items->where('is_correct', false)->where('skipped', false)->count(),
+                'dilewati'    => $items->where('skipped', true)->count(),
             ],
         ]);
     }

@@ -66,20 +66,31 @@ class AiExplanationService
 
 
     /**
-     * Handle "Tanya AI" — free-form follow-up question on a soal.
+     * Handle "Tanya AI" — free-form follow-up question, with optional soal context.
      */
-    public function tanya(Soal $soal, string $pertanyaan, int $userId): string
+    public function tanya(?Soal $soal, string $pertanyaan, int $userId): string
     {
-        $mapelNama = $soal->mapel->nama ?? 'SNBT';
-        $prompt = <<<PROMPT
-Kamu adalah tutor SNBT ahli. Berikut soal dan pertanyaan lanjutan dari siswa.
+        if ($soal) {
+            $mapelNama = $soal->mapel->nama ?? 'SNBT';
+            $prompt = <<<PROMPT
+Kamu adalah tutor SNBT ahli. Seorang siswa mengajukan pertanyaan tentang soal berikut.
 
+MAPEL: {$mapelNama}
 SOAL: {$soal->konten}
 
 PERTANYAAN SISWA: {$pertanyaan}
 
-Berikan penjelasan singkat, jelas, dan langsung menjawab pertanyaan siswa. Gunakan bahasa Indonesia. Maksimal 200 kata.
+Berikan penjelasan singkat, jelas, dan langsung menjawab pertanyaan. Gunakan bahasa Indonesia yang mudah dipahami. Maksimal 300 kata. Jika relevan, berikan contoh atau langkah-langkah singkat.
 PROMPT;
+        } else {
+            $prompt = <<<PROMPT
+Kamu adalah tutor SNBT ahli yang membantu siswa mempersiapkan ujian masuk perguruan tinggi Indonesia (SNBT/UTBK).
+
+PERTANYAAN SISWA: {$pertanyaan}
+
+Berikan jawaban yang jelas, akurat, dan mudah dipahami dalam bahasa Indonesia. Maksimal 300 kata. Jika pertanyaan di luar topik SNBT/akademik, tetap jawab dengan sopan dan arahkan kembali ke persiapan SNBT.
+PROMPT;
+        }
 
         $result = $this->gemini->generateFlash($prompt, $userId, 'tanya_ai');
         return $result['text'];

@@ -7,7 +7,7 @@ use Illuminate\Database\Eloquent\Model;
 class PengamatSekolah extends Model
 {
     protected $table    = 'pengamat_sekolah';
-    protected $fillable = ['pengamat_id', 'sekolah_id', 'status', 'approved_at', 'approved_by', 'catatan'];
+    protected $fillable = ['pengamat_id', 'sekolah_id', 'jabatan', 'status', 'approved_at', 'approved_by', 'catatan'];
 
     protected $casts = [
         'approved_at' => 'datetime',

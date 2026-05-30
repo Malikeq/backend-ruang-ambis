@@ -64,6 +64,60 @@ class AdminPengamatController extends Controller
     }
 
     /**
+     * POST /admin/pengamat — buat akun pengamat baru langsung dari admin (auto-approved)
+     */
+    public function store(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'name'       => ['required', 'string', 'max:255'],
+            'email'      => ['required', 'email', 'unique:users,email'],
+            'password'   => ['required', 'string', 'min:8'],
+            'sekolah_id' => ['required', 'integer', 'exists:sekolah,id'],
+            'jabatan'    => ['nullable', 'string', 'max:100'],
+        ]);
+
+        // Buat user baru dengan role pengamat
+        $user = User::create([
+            'name'     => $validated['name'],
+            'email'    => $validated['email'],
+            'password' => bcrypt($validated['password']),
+            'role'     => 'pengamat',
+        ]);
+
+        // Buat record pengamat + langsung approved
+        $pengamatRecord = PengamatSekolah::create([
+            'pengamat_id' => $user->id,
+            'sekolah_id'  => $validated['sekolah_id'],
+            'jabatan'     => $validated['jabatan'] ?? null,
+            'status'      => 'approved',
+            'approved_at' => now(),
+            'approved_by' => $request->user()->id,
+        ]);
+
+        // Sinkronkan sekolah_id ke user
+        $user->update(['sekolah_id' => $validated['sekolah_id']]);
+
+        $pengamatRecord->load(['pengamat', 'sekolah']);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Akun pengamat berhasil dibuat dan langsung disetujui.',
+            'data'    => $pengamatRecord,
+        ], 201);
+    }
+
+    /**
+     * DELETE /admin/pengamat/{id} — hapus pengamat dan user-nya
+     */
+    public function destroy(PengamatSekolah $pengamat): JsonResponse
+    {
+        // Hapus record pengamat_sekolahs
+        $pengamat->delete();
+
+        return response()->json(['success' => true, 'message' => 'Pengamat berhasil dihapus.']);
+    }
+
+    /**
      * GET /admin/sekolah — list sekolah untuk admin manage
      */
     public function sekolahIndex(Request $request): JsonResponse

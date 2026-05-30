@@ -38,11 +38,15 @@ class AiExplanationController extends Controller
     public function tanya(Request $request): JsonResponse
     {
         $data = $request->validate([
-            'soal_id'    => ['required', 'integer', 'exists:soal,id'],
-            'pertanyaan' => ['required', 'string', 'max:500'],
+            'soal_id'    => ['nullable', 'integer'],
+            'pertanyaan' => ['required', 'string', 'max:1000'],
         ]);
 
-        $soal = Soal::with(['mapel', 'pilihan_jawaban'])->find($data['soal_id']);
+        // Load soal for context if a valid ID was provided (> 0)
+        $soal = null;
+        if (!empty($data['soal_id']) && $data['soal_id'] > 0) {
+            $soal = Soal::with(['mapel', 'pilihan_jawaban'])->find($data['soal_id']);
+        }
 
         try {
             $jawaban = $this->service->tanya($soal, $data['pertanyaan'], $request->user()->id);
@@ -50,8 +54,8 @@ class AiExplanationController extends Controller
         } catch (\Exception $e) {
             $isQuota = str_contains($e->getMessage(), '429') || str_contains($e->getMessage(), 'RESOURCE_EXHAUSTED');
             return response()->json([
-                'success' => false,
-                'message' => $isQuota
+                'success'     => false,
+                'message'     => $isQuota
                     ? 'Kuota AI habis sementara. Coba lagi dalam 1 menit.'
                     : 'AI sedang sibuk. Coba lagi.',
                 'retry_after' => $isQuota ? 60 : null,
