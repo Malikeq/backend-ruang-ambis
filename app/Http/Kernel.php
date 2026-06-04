@@ -45,6 +45,7 @@ class Kernel extends HttpKernel
         'verified'         => \Illuminate\Auth\Middleware\EnsureEmailIsVerified::class,
         // Custom
         'check.tier'       => \App\Http\Middleware\CheckTier::class,
+        'check.feature'    => \App\Http\Middleware\CheckFeature::class,
         'rate.limit.ai'    => \App\Http\Middleware\RateLimitAI::class,
         'admin'            => \App\Http\Middleware\AdminMiddleware::class,
         'pengamat'         => \App\Http\Middleware\PengamatMiddleware::class,

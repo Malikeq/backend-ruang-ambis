@@ -20,7 +20,7 @@ use App\Http\Controllers\Api\Admin\AdminPackageController;
 use App\Http\Controllers\Api\Admin\AdminPengamatController;
 use App\Http\Controllers\Api\Pengamat\PengamatController;
 use App\Http\Controllers\Api\Pengamat\PengamatAuthController;
-use App\Http\Controllers\Api\KeketatanController;
+use App\Http\Controllers\Api\NotificationController;
 
 
 Route::prefix('v1')->group(function () {
@@ -33,6 +33,9 @@ Route::prefix('v1')->group(function () {
     Route::get('packages',        [AdminPackageController::class, 'index']);
     Route::get('kampus',          [OnboardingController::class, 'getKampus']);
     Route::get('kampus/{id}/jurusan', [OnboardingController::class, 'getJurusan']);
+    Route::get('payment/done',    [PaymentController::class, 'done']);
+    // Midtrans webhook — public (no auth token from Midtrans)
+    Route::post('payment/webhook', [PaymentController::class, 'webhook']);
 
     // ── Auth required ─────────────────────────────────────
     Route::middleware('auth:sanctum')->group(function () {
@@ -43,6 +46,10 @@ Route::prefix('v1')->group(function () {
         // User profile & targets
         Route::get('user/targets',         [OnboardingController::class, 'getTargets']);
         Route::post('user/profile',        [OnboardingController::class, 'updateProfile']);
+        Route::get('user/features',        function (\Illuminate\Http\Request $req) {
+            $features = \App\Http\Middleware\CheckFeature::getUserFeatures($req->user());
+            return response()->json(['success' => true, 'data' => $features]);
+        });
 
         // Onboarding
         Route::post('onboarding/target',            [OnboardingController::class, 'setTarget']);
@@ -88,6 +95,7 @@ Route::prefix('v1')->group(function () {
 
         // AI Explanation (free — cached)
         Route::get('ai/explanation/{soalId}',            [AiExplanationController::class, 'getExplanation']);
+        Route::get('ai/quota',                           [AiExplanationController::class, 'quota']);
 
         // AI Tanya (premium/daily only)
         Route::post('ai/tanya', [AiExplanationController::class, 'tanya'])
@@ -99,9 +107,15 @@ Route::prefix('v1')->group(function () {
 
         // Payment
         Route::post('payment/initiate',         [PaymentController::class, 'initiate']);
-        Route::post('payment/webhook',           [PaymentController::class, 'webhook']);
         Route::get('payment/status/{orderId}',   [PaymentController::class, 'status']);
         Route::post('payment/promo',             [PaymentController::class, 'applyPromo']);
+
+        // Push notifications
+        Route::post('notifications/register',           [NotificationController::class, 'register']);
+        Route::post('notifications/unregister',         [NotificationController::class, 'unregister']);
+        Route::get('notifications/preferences',         [NotificationController::class, 'preferences']);
+        Route::patch('notifications/preferences',       [NotificationController::class, 'updatePreferences']);
+        Route::post('notifications/test-push',         [NotificationController::class, 'testPush']);
     });
 
     // ── Admin (superadmin role) ───────────────────────────
@@ -154,6 +168,7 @@ Route::prefix('v1')->group(function () {
         Route::post('packages',                         [AdminPackageController::class, 'store']);
         Route::patch('packages/{pkg}',                  [AdminPackageController::class, 'update']);
         Route::delete('packages/{pkg}',                 [AdminPackageController::class, 'destroy']);
+        Route::get('features-definition',               [AdminPackageController::class, 'featuresDefinitionEndpoint']);
 
         // Kampus logo management
         Route::get('kampus',                            [\App\Http\Controllers\Api\Admin\AdminKampusController::class, 'index']);

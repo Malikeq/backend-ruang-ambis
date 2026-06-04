@@ -7,6 +7,7 @@ use App\Models\Soal;
 use App\Services\AiExplanationService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\RateLimiter;
 
 class AiExplanationController extends Controller
 {
@@ -61,5 +62,46 @@ class AiExplanationController extends Controller
                 'retry_after' => $isQuota ? 60 : null,
             ], $isQuota ? 429 : 503);
         }
+    }
+
+    /**
+     * GET /ai/quota?feature=tanya_ai
+     * Returns daily AI usage for the authenticated user.
+     */
+    public function quota(Request $request): JsonResponse
+    {
+        $feature = $request->query('feature', 'tanya_ai');
+        if (!in_array($feature, ['tanya_ai', 'photo_solve'], true)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Feature tidak valid.',
+            ], 422);
+        }
+
+        $user  = $request->user();
+        $limit = $this->dailyLimit($user->tier, $feature);
+        $key   = "ai:{$feature}:{$user->id}:" . now()->format('Y-m-d');
+        $used  = RateLimiter::attempts($key);
+
+        return response()->json([
+            'success' => true,
+            'data'    => [
+                'feature'    => $feature,
+                'tier'       => $user->tier,
+                'has_access' => in_array($user->tier, ['premium', 'daily_pass'], true),
+                'limit'      => $limit,
+                'used'       => $used,
+                'remaining'  => max(0, $limit - $used),
+            ],
+        ]);
+    }
+
+    private function dailyLimit(string $tier, string $feature): int
+    {
+        return match ($feature) {
+            'tanya_ai'    => match ($tier) { 'premium' => 30, 'daily_pass' => 5, default => 0 },
+            'photo_solve' => match ($tier) { 'premium' => 10, 'daily_pass' => 3, default => 0 },
+            default       => 0,
+        };
     }
 }

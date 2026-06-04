@@ -20,6 +20,25 @@ class Kernel extends ConsoleKernel
                  ->withoutOverlapping()
                  ->runInBackground()
                  ->appendOutputTo(storage_path('logs/snbt-scrape.log'));
+
+        // Push notifications — WIB
+        $schedule->command('notifications:streak-reminders --slot=morning')
+                 ->dailyAt('08:00')
+                 ->timezone('Asia/Jakarta')
+                 ->withoutOverlapping()
+                 ->runInBackground();
+
+        $schedule->command('notifications:streak-reminders --slot=evening')
+                 ->dailyAt('20:00')
+                 ->timezone('Asia/Jakarta')
+                 ->withoutOverlapping()
+                 ->runInBackground();
+
+        $schedule->command('notifications:weekly-report')
+                 ->weeklyOn(0, '09:00')
+                 ->timezone('Asia/Jakarta')
+                 ->withoutOverlapping()
+                 ->runInBackground();
     }
 
     protected function commands(): void

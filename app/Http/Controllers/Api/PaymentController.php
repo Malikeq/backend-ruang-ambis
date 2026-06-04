@@ -9,6 +9,8 @@ use App\Models\Subscription;
 use App\Models\PromoCode;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 class PaymentController extends Controller
@@ -47,8 +49,13 @@ class PaymentController extends Controller
             'status'           => 'pending',
         ]);
 
-        // Midtrans snap token (sandbox)
-        $snapToken = $this->createMidtransToken($orderId, $grossAmount, $request->user(), $package);
+        // Create Midtrans Snap token
+        try {
+            $snapToken = $this->createMidtransToken($orderId, $grossAmount, $request->user(), $package);
+        } catch (\RuntimeException $e) {
+            $transaction->delete(); // rollback pending transaction
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 503);
+        }
 
         if ($promoUsed) {
             $promoUsed->increment('used_count');
@@ -62,7 +69,11 @@ class PaymentController extends Controller
                 'gross_amount'   => $grossAmount,
                 'snap_token'     => $snapToken,
                 'client_key'     => config('services.midtrans.client_key'),
-                'is_production'  => config('services.midtrans.is_production'),
+                'merchant_id'    => config('services.midtrans.merchant_id'),
+                'is_production'  => (bool) config('services.midtrans.is_production'),
+                'snap_url'       => config('services.midtrans.is_production')
+                    ? "https://app.midtrans.com/snap/v2/vtweb/{$snapToken}"
+                    : "https://app.sandbox.midtrans.com/snap/v2/vtweb/{$snapToken}",
             ],
         ]);
     }
@@ -71,41 +82,28 @@ class PaymentController extends Controller
     {
         $data = $request->all();
 
-        // Verify signature
-        $signatureKey = hash('sha512',
-            $data['order_id'] . $data['status_code'] . $data['gross_amount'] . config('services.midtrans.server_key')
+        // Verify Midtrans signature
+        $expected = hash('sha512',
+            ($data['order_id'] ?? '') .
+            ($data['status_code'] ?? '') .
+            ($data['gross_amount'] ?? '') .
+            config('services.midtrans.server_key')
         );
 
-        if ($signatureKey !== $data['signature_key']) {
+        if ($expected !== ($data['signature_key'] ?? '')) {
+            \Log::warning('Midtrans webhook invalid signature', ['order' => $data['order_id'] ?? '']);
             return response()->json(['success' => false, 'message' => 'Invalid signature.'], 403);
         }
 
         $transaction = Transaction::where('midtrans_order_id', $data['order_id'])->first();
         if (!$transaction) return response()->json(['success' => false], 404);
 
-        $status = match($data['transaction_status']) {
-            'settlement', 'capture' => 'paid',
-            'cancel', 'expire', 'deny' => 'failed',
-            default => 'pending',
-        };
+        $mtStatus = $data['transaction_status'] ?? '';
 
-        $transaction->update(['status' => $status, 'payment_method' => $data['payment_type'] ?? null]);
-
-        if ($status === 'paid') {
-            $package = Package::find($transaction->package_id);
-            $selesai = now()->addDays($package->durasi_hari);
-
-            Subscription::create([
-                'user_id'    => $transaction->user_id,
-                'package_id' => $transaction->package_id,
-                'mulai'      => now(),
-                'selesai'    => $selesai,
-                'payment_id' => $transaction->midtrans_order_id,
-                'status'     => 'active',
-            ]);
-
-            $tier = $package->durasi_hari === 1 ? 'daily_pass' : 'premium';
-            $transaction->user->update(['tier' => $tier]);
+        if (in_array($mtStatus, ['settlement', 'capture'])) {
+            $this->activateSubscription($transaction);
+        } elseif (in_array($mtStatus, ['cancel', 'expire', 'deny'])) {
+            $transaction->update(['status' => 'failed']);
         }
 
         return response()->json(['success' => true]);
@@ -115,10 +113,85 @@ class PaymentController extends Controller
     {
         $transaction = Transaction::where('midtrans_order_id', $orderId)
             ->where('user_id', $request->user()->id)
+            ->with('package')
             ->firstOrFail();
 
-        return response()->json(['success' => true, 'data' => $transaction->load('package')]);
+        // If already paid, return immediately
+        if ($transaction->status === 'paid') {
+            return response()->json([
+                'success' => true,
+                'data'    => ['status' => 'paid', 'package' => $transaction->package],
+            ]);
+        }
+
+        // Ask Midtrans directly for the real status
+        try {
+            $isProd   = (bool) config('services.midtrans.is_production');
+            $baseUrl  = $isProd
+                ? 'https://api.midtrans.com/v2'
+                : 'https://api.sandbox.midtrans.com/v2';
+
+            $mtResp = \Http::withBasicAuth(config('services.midtrans.server_key'), '')
+                ->get("{$baseUrl}/{$orderId}/status");
+
+            if ($mtResp->successful()) {
+                $mtStatus = $mtResp->json('transaction_status');
+
+                if (in_array($mtStatus, ['settlement', 'capture'])) {
+                    // Activate subscription — idempotent via firstOrCreate
+                    $this->activateSubscription($transaction);
+                    return response()->json([
+                        'success' => true,
+                        'data'    => ['status' => 'paid', 'package' => $transaction->package],
+                    ]);
+                }
+
+                if (in_array($mtStatus, ['cancel', 'expire', 'deny'])) {
+                    $transaction->update(['status' => 'failed']);
+                    return response()->json([
+                        'success' => true,
+                        'data'    => ['status' => 'failed'],
+                    ]);
+                }
+            }
+        } catch (\Throwable $e) {
+            \Log::warning('Midtrans status check failed', ['error' => $e->getMessage()]);
+        }
+
+        return response()->json([
+            'success' => true,
+            'data'    => ['status' => $transaction->status, 'package' => $transaction->package],
+        ]);
     }
+
+    /**
+     * Activate subscription for a transaction — idempotent.
+     */
+    private function activateSubscription(Transaction $transaction): void
+    {
+        // Avoid duplicate subscriptions
+        $already = Subscription::where('payment_id', $transaction->midtrans_order_id)->exists();
+        if ($already) return;
+
+        $package = Package::find($transaction->package_id);
+        if (!$package) return;
+
+        $selesai = now()->addDays($package->durasi_hari);
+        $tier    = $package->tier ?? ($package->durasi_hari === 1 ? 'daily_pass' : 'premium');
+
+        Subscription::create([
+            'user_id'    => $transaction->user_id,
+            'package_id' => $transaction->package_id,
+            'mulai'      => now(),
+            'selesai'    => $selesai,
+            'payment_id' => $transaction->midtrans_order_id,
+            'status'     => 'active',
+        ]);
+
+        $transaction->update(['status' => 'paid', 'payment_method' => 'midtrans']);
+        $transaction->user->update(['tier' => $tier]);
+    }
+
 
     public function applyPromo(Request $request): JsonResponse
     {
@@ -136,20 +209,117 @@ class PaymentController extends Controller
 
     private function createMidtransToken(string $orderId, int $amount, $user, Package $package): string
     {
-        // Midtrans sandbox snap API
+        $isProd  = (bool) config('services.midtrans.is_production');
         $payload = [
-            'transaction_details' => ['order_id' => $orderId, 'gross_amount' => $amount],
-            'customer_details'    => ['first_name' => $user->name, 'email' => $user->email],
-            'item_details'        => [['id' => $package->id, 'price' => $amount, 'quantity' => 1, 'name' => $package->nama]],
+            'transaction_details' => [
+                'order_id'     => $orderId,
+                'gross_amount' => $amount,
+            ],
+            'customer_details' => [
+                'first_name' => $user->name,
+                'email'      => $user->email,
+            ],
+            'item_details' => [[
+                'id'       => (string) $package->id,
+                'price'    => $amount,
+                'quantity' => 1,
+                'name'     => $package->nama,
+            ]],
+            'callbacks' => [
+                'finish' => config('services.midtrans.finish_url',
+                    config('app.url') . '/api/v1/payment/done'),
+            ],
         ];
 
-        $url      = config('services.midtrans.is_production')
+        $url = $isProd
             ? 'https://app.midtrans.com/snap/v1/transactions'
             : 'https://app.sandbox.midtrans.com/snap/v1/transactions';
 
         $response = \Http::withBasicAuth(config('services.midtrans.server_key'), '')
+            ->withHeaders(['Accept' => 'application/json', 'Content-Type' => 'application/json'])
             ->post($url, $payload);
 
+        if (!$response->successful()) {
+            \Log::error('Midtrans Snap error', ['body' => $response->body(), 'status' => $response->status()]);
+            throw new \RuntimeException('Midtrans: ' . ($response->json('error_messages.0') ?? 'Unknown error'));
+        }
+
         return $response->json('token') ?? '';
+    }
+
+    /**
+     * Mobile-friendly payment finish page.
+     * Midtrans redirects here after payment. Returns a styled HTML page.
+     */
+    public function done(Request $request)
+    {
+        $status  = $request->query('transaction_status', 'unknown');
+        $orderId = $request->query('order_id', '');
+
+        $isSuccess = in_array($status, ['settlement', 'capture']);
+        $isPending = $status === 'pending';
+
+        $emoji  = $isSuccess ? '🎉' : ($isPending ? '⏳' : '❌');
+        $title  = $isSuccess ? 'Pembayaran Berhasil!'
+                             : ($isPending ? 'Menunggu Pembayaran' : 'Pembayaran Gagal');
+        $msg    = $isSuccess
+            ? 'Transaksi dikonfirmasi. Akun kamu sudah diupgrade!'
+            : ($isPending ? 'Pembayaranmu sedang diproses.' : 'Terjadi masalah dengan pembayaran.');
+        $color  = $isSuccess ? '#10b981' : ($isPending ? '#f59e0b' : '#ef4444');
+
+        // Pre-compute to avoid ternary inside heredoc
+        $orderHtml   = $orderId ? "<p class=\"order\">Order: {$orderId}</p>" : '';
+        $borderColor = $color . '66';
+        $glowColor   = $color . '22';
+        $btnBg       = $color;
+
+        $html = <<<HTML
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Status Pembayaran</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #0B0B1A; color: #f1f5f9;
+      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      padding: 24px;
+    }
+    .card {
+      background: #141428; border-radius: 24px;
+      border: 1px solid $borderColor;
+      padding: 40px 32px; max-width: 380px; width: 100%;
+      text-align: center; box-shadow: 0 0 60px $glowColor;
+    }
+    .emoji { font-size: 64px; margin-bottom: 20px; display: block; }
+    h1 { font-size: 22px; font-weight: 800; margin-bottom: 12px; color: $color; }
+    p  { font-size: 15px; color: #94a3b8; line-height: 1.6; margin-bottom: 16px; }
+    .order { font-size: 11px; color: #475569; font-family: monospace; }
+    .btn {
+      display: block; background: $btnBg; color: #fff;
+      padding: 14px 32px; border-radius: 14px; font-weight: 700;
+      font-size: 15px; cursor: pointer; border: none; width: 100%;
+      margin-top: 24px;
+    }
+    .close-note { font-size: 12px; color: #334155; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <span class="emoji">$emoji</span>
+    <h1>$title</h1>
+    <p>$msg</p>
+    $orderHtml
+    <button class="btn" onclick="window.close()">Tutup &amp; Kembali ke App</button>
+    <p class="close-note">Silakan tutup halaman ini untuk kembali ke aplikasi.</p>
+  </div>
+</body>
+</html>
+HTML;
+
+        return response($html, 200, ['Content-Type' => 'text/html']);
     }
 }

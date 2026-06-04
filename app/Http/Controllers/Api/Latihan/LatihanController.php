@@ -33,7 +33,33 @@ class LatihanController extends Controller
 
         $user   = $request->user();
         $mode   = $data['mode'] ?? 'acak';
-        $limit  = $data['jumlah_soal'] ?? ($user->isFree() ? 20 : 40);
+
+        // Free tier: max N completed/started sessions per calendar day
+        if ($user->isFree()) {
+            $dailyLimit  = (int) config('ailolos.free_daily_sessions', 2);
+            $sesiHariIni = $user->sesiLatihan()->whereDate('created_at', today())->count();
+
+            if ($sesiHariIni >= $dailyLimit) {
+                return response()->json([
+                    'success'          => false,
+                    'message'          => "Batas {$dailyLimit} sesi latihan per hari untuk akun gratis. Upgrade ke Premium untuk latihan tanpa batas.",
+                    'upgrade_required' => true,
+                    'sesi_hari_ini'    => $sesiHariIni,
+                    'limit'            => $dailyLimit,
+                ], 403);
+            }
+        }
+
+        $freeMaxSoal = (int) config('ailolos.free_max_soal_per_session', 20);
+        $limit       = $data['jumlah_soal'] ?? ($user->isFree() ? $freeMaxSoal : 40);
+
+        if ($user->isFree() && isset($data['jumlah_soal']) && $data['jumlah_soal'] > $freeMaxSoal) {
+            return response()->json([
+                'success' => false,
+                'message' => "Akun gratis maksimal {$freeMaxSoal} soal per sesi.",
+                'limit'   => $freeMaxSoal,
+            ], 422);
+        }
         $query  = Soal::where('is_published', true);
 
         // Filter by mapel

@@ -17,6 +17,7 @@ class User extends Authenticatable
         'streak_days', 'last_active', 'is_banned',
         'onboarding_completed', 'diagnostic_completed', 'avatar_url',
         'referral_source', 'asal_sekolah', 'sekolah_id',
+        'push_streak_reminder', 'push_weekly_report',
     ];
 
     protected $hidden = ['password', 'remember_token'];
@@ -27,6 +28,8 @@ class User extends Authenticatable
         'is_banned'            => 'boolean',
         'onboarding_completed' => 'boolean',
         'diagnostic_completed' => 'boolean',
+        'push_streak_reminder' => 'boolean',
+        'push_weekly_report'   => 'boolean',
     ];
 
     // ── Role helpers ───────────────────────────────────────
@@ -45,6 +48,7 @@ class User extends Authenticatable
     public function subscriptions()      { return $this->hasMany(Subscription::class); }
     public function pointsTransactions() { return $this->hasMany(PointsTransaction::class); }
     public function transactions()       { return $this->hasMany(Transaction::class); }
+    public function pushTokens()         { return $this->hasMany(PushToken::class); }
     // Pengamat relationships
     public function sekolah()            { return $this->belongsTo(Sekolah::class); }
     public function pengamatSekolah()    { return $this->hasOne(PengamatSekolah::class, 'pengamat_id'); }
